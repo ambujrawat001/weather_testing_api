@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Open-Meteo Weather Fetcher</title>
+<style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .input-group { margin-bottom: 12px; }
+    label { display: inline-block; width: 200px; }
+    input { padding: 5px; }
+    button { padding: 7px 14px; margin-top: 10px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    th, td { border: 1px solid #999; padding: 6px; text-align: center; }
+    #results div { padding: 6px; border: 1px solid #ccc; margin-top: 5px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<h2>Weather Data Fetcher (Open-Meteo)</h2>
+
+<div class="input-group">
+    <label>Search location:</label>
+    <input type="text" id="searchBox">
+    <button onclick="geocode()">Search</button>
+</div>
+
+<div id="results"></div>
+
+<div class="input-group">
+    <label>Latitude:</label>
+    <input type="number" id="latInput" step="0.0001">
+</div>
+
+<div class="input-group">
+    <label>Longitude:</label>
+    <input type="number" id="lonInput" step="0.0001">
+</div>
+
+<div class="input-group">
+    <label>Hours (default 24):</label>
+    <input type="number" id="hoursInput" value="24">
+</div>
+
+<button id="fetchBtn" onclick="fetchOpenMeteo()">Fetch Weather</button>
+
+<p id="status"></p>
+
+<h3>Summary</h3>
+<div id="summary"></div>
+
+<h3>Data Table</h3>
+<table>
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Temperature</th>
+            <th>Humidity</th>
+            <th>Wind Speed</th>
+            <th>Wind Direction</th>
+        </tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+</table>
+
+<script>
+// ----------------------
+// Helper function
+// ----------------------
+function q(id) { return document.querySelector(id); }
+
+const latInput = q('#latInput');
+const lonInput = q('#lonInput');
+const hoursInput = q('#hoursInput');
+const statusEl = q('#status');
+const summaryEl = q('#summary');
+const tableBody = q('#tableBody');
+const searchBox = q('#searchBox');
+const resultsDiv = q('#results');
+
+// ----------------------
+// STATUS
+// ----------------------
+function setStatus(msg, isError=false) {
+    statusEl.textContent = msg;
+    statusEl.style.color = isError ? 'red' : 'green';
+}
+
+// ----------------------
+// 1) Search (Geocoding API)
+// ----------------------
+async function geocode() {
+    const query = searchBox.value.trim();
+    if (!query) {
+        alert("Enter a location");
+        return;
+    }
+
+    setStatus("Searching...");
+
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=6&language=en&format=json`;
+
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (!data.results || data.results.length === 0) {
+            resultsDiv.innerHTML = "<p>No results found.</p>";
+            setStatus("No results", true);
+            return;
+        }
+
+        resultsDiv.innerHTML = "";
+        data.results.forEach(r => {
+            const admin = r.admin1 ? `, ${r.admin1}` : "";
+            const div = document.createElement("div");
+            div.textContent = `${r.name}, ${r.country}${admin} (Lat: ${r.latitude}, Lon: ${r.longitude})`;
+            div.onclick = () => {
+                latInput.value = r.latitude;
+                lonInput.value = r.longitude;
+                resultsDiv.innerHTML = "";
+                setStatus("Location selected");
+            };
+            resultsDiv.appendChild(div);
+        });
+
+        setStatus("Select a location from list");
+
+    } catch (err) {
+        setStatus("Search error", true);
+        console.error(err);
+    }
+}
+
+// --------------------------
+// 2) Fetch Weather (Forecast API)
+// --------------------------
+async function fetchOpenMeteo() {
+    const lat = parseFloat(latInput.value);
+    const lon = parseFloat(lonInput.value);
+    const hours = parseInt(hoursInput.value) || 24;
+
+    if (isNaN(lat) || isNaN(lon)) {
+        alert("Latitude and Longitude required");
+        return;
+    }
+
+    setStatus("Fetching weather...");
+
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m`;
+
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (!data.hourly) {
+            setStatus("No hourly data available", true);
+            return;
+        }
+
+        updateSummary(data);
+        populateTable(data, hours);
+
+        setStatus("Data loaded");
+
+    } catch (err) {
+        setStatus("Error fetching weather", true);
+        console.error(err);
+    }
+}
+
+// --------------------------
+// SUMMARY
+// --------------------------
+function updateSummary(data) {
+    const temps = data.hourly.temperature_2m;
+    const humid = data.hourly.relative_humidity_2m;
+    const wind = data.hourly.wind_speed_10m;
+
+    const avgTemp = (temps.reduce((a,b)=>a+b) / temps.length).toFixed(2);
+    const maxTemp = Math.max(...temps);
+    const minTemp = Math.min(...temps);
+    const maxHum = Math.max(...humid);
+    const maxWind = Math.max(...wind);
+
+    summaryEl.innerHTML = `
+        <p><b>Avg Temperature:</b> ${avgTemp} °C</p>
+        <p><b>Max Temperature:</b> ${maxTemp} °C</p>
+        <p><b>Min Temperature:</b> ${minTemp} °C</p>
+        <p><b>Max Humidity:</b> ${maxHum} %</p>
+        <p><b>Max Wind Speed:</b> ${maxWind} m/s</p>
+    `;
+}
+
+// --------------------------
+// TABLE
+// --------------------------
+function populateTable(data, hours) {
+    const t = data.hourly.time;
+    const temp = data.hourly.temperature_2m;
+    const hum = data.hourly.relative_humidity_2m;
+    const wsp = data.hourly.wind_speed_10m;
+    const wdir = data.hourly.wind_direction_10m;
+
+    let html = "";
+    const limit = Math.min(hours, t.length);
+
+    for (let i = 0; i < limit; i++) {
+        html += `
+            <tr>
+                <td>${t[i]}</td>
+                <td>${temp[i]}</td>
+                <td>${hum[i]}</td>
+                <td>${wsp[i]}</td>
+                <td>${wdir[i]}</td>
+            </tr>
+        `;
+    }
+
+    tableBody.innerHTML = html;
+}
+
+</script>
+</body>
+</html>
